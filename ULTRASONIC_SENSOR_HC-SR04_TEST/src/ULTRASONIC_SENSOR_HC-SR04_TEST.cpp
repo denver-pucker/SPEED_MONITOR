@@ -26,19 +26,23 @@
 #include "Adafruit_MQTT/Adafruit_MQTT.h"
 #include "credentials.h"
 
-const int TRIGGERPIN1 = D8;   // Trigger pin sensor 1
-const int ECHOPIN1 = D9;      // Echo pin sensor 1
+const int TRIGGERPIN1 = D8;  // Trigger pin sensor 1
+const int ECHOPIN1 = D9;     // Echo pin sensor 1
 const int TRIGGERPIN2 = D7;  // Trigger pin sensor 2
 const int ECHOPIN2 = D6;     // Echo pin sensor 2
+const int PIR = D5;          // PIR sensor
 const int DISTANCE = 1.0;    // Adjust distance as necessary in feet
 
 float timeSensor1, timeSensor2;
 float deltaTime, feetPerSecond;
 float speedFPS, speedMPH;
 int count = 0;
-// float duration1 = 0.0;
-// float duration2 = 0.0;
-// float distanceIn = 0.0;
+bool motion;
+
+float duration1 = 0.0;
+float duration2 = 0.0;
+float distance1 = 0.0;
+float distance2 = 0.0;
 
 TCPClient TheClient; 
  
@@ -50,6 +54,8 @@ Adafruit_MQTT_Publish dustPub = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feed
 void MQTT_connect();
 bool MQTT_ping();
 float measureTime(int trigPin, int echoPin);
+float distance(int trigPin, int echoPin);
+float speed(uint32_t time, float sensor1, float sensor2);
 
 // Let Device OS manage the connection to the Particle Cloud
 SYSTEM_MODE(SEMI_AUTOMATIC);
@@ -70,47 +76,53 @@ void setup() {
   pinMode(TRIGGERPIN1,OUTPUT);
   pinMode(ECHOPIN1,INPUT); 
   pinMode(TRIGGERPIN2,OUTPUT);     
-  pinMode(ECHOPIN2,INPUT);      
+  pinMode(ECHOPIN2,INPUT); 
+  pinMode(PIR,INPUT);     
 }
 
 // loop() runs over and over again, as quickly as it can execute.
 void loop() {
-  Serial.printf("Waiting for sensor1 to get triggered......\n");
 
-  // Wait for sensor 1 to get triggered
+  // Use this to get distance
+  // distance1 = distance(TRIGGERPIN1,ECHOPIN1); // Use function to calculate the distance
+  // Serial.printf("Distance too far %0.2f waiting for sensor1 to get triggered......\n", distance1);
+  // Serial.printf("Sensor 1 distance = %0.2f in\n",distance1); // Output to serial
+  // distance2 = distance(TRIGGERPIN2,ECHOPIN2);
+  // Serial.printf("Sensor 2 distance = %0.2f in\n",distance2); // Output to serial
+  // if(distance1 < 25.0) {
+    // Wait for sensor 1 to get triggered
+  motion = digitalRead(PIR);
+  Serial.printf("Motion detected %i\n",motion);
+  if(motion) {
   timeSensor1 = measureTime(TRIGGERPIN1,ECHOPIN1);
   while(timeSensor1 == 0) {
-    timeSensor1 = (measureTime(TRIGGERPIN1,ECHOPIN1) * 0.0000001);
+    // timeSensor1 = (measureTime(TRIGGERPIN1,ECHOPIN1) * 0.0000001);
+    timeSensor1 = measureTime(TRIGGERPIN1,ECHOPIN1);
   }
   // Serial.printf("timeSensor1 = %0.2f\n",timeSensor1);
 
   // Wait for sensor 2 to get triggered
   timeSensor2 = measureTime(TRIGGERPIN2,ECHOPIN2);
   while(timeSensor2 == 0) {
-    timeSensor2 = (measureTime(TRIGGERPIN2,ECHOPIN2) * 0.0000001);
+    // timeSensor2 = (measureTime(TRIGGERPIN2,ECHOPIN2) * 0.0000001);
+    timeSensor2 = measureTime(TRIGGERPIN2,ECHOPIN2);
   }
   // Serial.printf("timeSensor2 = %0.2f\n",timeSensor2);
   
   deltaTime = timeSensor2 - timeSensor1;
 
   if(deltaTime > 0) {
+    Serial.printf("Objects measured = %i\n", count);
     speedFPS = DISTANCE / deltaTime;    // speed = distance / time
     Serial.printf("speedFPS = %0.2f FPS\n",speedFPS);
     speedMPH = speedFPS * 0.681818;     // 1ft/sec = 0.681818 miles/hour
     count++;
-    Serial.printf("Speed = %0.2f MPH\n", speedMPH);
-    Serial.printf("Objects measured = %i\n", count);
+    Serial.printf("Speed = %0.2f MPH\n\n", speedMPH);
   }
+}
   delay(500);
-  // returns the Duration in microseconds
-  // duration1 = pulseIn(ECHOPIN1,HIGH); // Waits for the echo pin to get high on sensor 1
-  // delayMicroseconds(10); // 10us high
-  // duration2 = pulseIn(ECHOPIN2,HIGH); // Waits for the echo pin to get high on sensor 2
-  // distanceIn = distance(duration1); // Use function to calculate the distance
-  // Serial.printf("Distance = %0.2f in\n",distanceIn); // Output to serial
-  // delay(1000); // Wait to do next measurement
-  // Serial.printf("duration1 = %0.2f\n", duration1);
-  // Serial.printf("duration2 = %0.2f\n", duration2);
+
+
 
 }
 
@@ -157,6 +169,31 @@ float measureTime(int trigPin, int echoPin) {
   digitalWrite(trigPin,HIGH);
   delay(10);
   digitalWrite(trigPin,LOW);
+  float pulse = pulseIn(echoPin,HIGH);
+  float pulseTime = pulse * 0.00089;
   // return pulseIn(echoPin,HIGH)*0.0000001;   //converts to seconds
-  return pulseIn(echoPin,HIGH);   //converts to seconds
+  // return pulseIn(echoPin,HIGH);   //converts to seconds
+  return pulseTime;
+}
+
+float distance(int trigPin, int echoPin) {
+  digitalWrite(trigPin,LOW);
+  delay(2);
+  digitalWrite(trigPin,HIGH);
+  delay(10);
+  digitalWrite(trigPin,LOW);
+  float pulse = pulseIn(echoPin,HIGH);
+  // Calculates the Distance in mm
+  // ((time)*(Speed of sound))/ toward and backward of object) * 10
+
+  // float distanceCalc = ((time /2.9) / 2); // Actual calculation in mm
+  float distanceCalc = ((pulse / 74.0) / 2.0); // Actual calculation in inches
+  return distanceCalc; // return calculated value
+}
+
+float speed(uint32_t time, float sensor1, float sensor2) {
+  float mph;
+    // Calculates the speed based on each sensors time
+  // ((time)*(Speed of sound))/ toward and backward of object) * 10
+  return mph;
 }
