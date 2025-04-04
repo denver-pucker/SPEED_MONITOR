@@ -6,6 +6,17 @@
  * Grove - Ultrasonic Ranger 
  * Distance = echo signal high time * Sound speed (343M/S)/2
  * Distance = echo signal high time * Sound speed (1,125FT/S)/2
+ * One ping of the HC0SR04 actually exists of 8 pulses at 40 kHz 
+ * to do the measurement. To start a ping you need to provide a 
+ * 10us pulse on the trigger input. When the distance is measured 
+ * by the 8 pulses the HC0SR04 puts a pulse on the echo pin. 
+ * You can calculate the distance with the length of the echo pulse 
+ * and the speed of sound. The speed of sound is 340 m/s or 
+ * 2.9 micro seconds per mm. We have to divide the length of the 
+ * pulse by 2.9 to get the result in mm. The ping is traveling 
+ * towards an object and back to the sensor again. 
+ * Because of this we need to divide the result by two. 
+ * Between two pings we need to keep a 60ms measurement cycle.
  */
 
 // Include Particle Device OS APIs
@@ -17,9 +28,9 @@
 
 const int TRIGGERPIN1 = D8;   // Trigger pin sensor 1
 const int ECHOPIN1 = D9;      // Echo pin sensor 1
-const int TRIGGERPIN2 = D16;  // Trigger pin sensor 2
-const int ECHOPIN2 = D15;     // Echo pin sensor 2
-const int DISTANCE = 2.0;    // Adjust distance as necessary in feet
+const int TRIGGERPIN2 = D7;  // Trigger pin sensor 2
+const int ECHOPIN2 = D6;     // Echo pin sensor 2
+const int DISTANCE = 1.0;    // Adjust distance as necessary in feet
 
 float timeSensor1, timeSensor2;
 float deltaTime, feetPerSecond;
@@ -69,30 +80,31 @@ void loop() {
   // Wait for sensor 1 to get triggered
   timeSensor1 = measureTime(TRIGGERPIN1,ECHOPIN1);
   while(timeSensor1 == 0) {
-    timeSensor1 = measureTime(TRIGGERPIN1,ECHOPIN1);
+    timeSensor1 = (measureTime(TRIGGERPIN1,ECHOPIN1) * 0.0000001);
   }
+  // Serial.printf("timeSensor1 = %0.2f\n",timeSensor1);
 
   // Wait for sensor 2 to get triggered
   timeSensor2 = measureTime(TRIGGERPIN2,ECHOPIN2);
   while(timeSensor2 == 0) {
-    timeSensor2 = measureTime(TRIGGERPIN2,ECHOPIN2);
+    timeSensor2 = (measureTime(TRIGGERPIN2,ECHOPIN2) * 0.0000001);
   }
+  // Serial.printf("timeSensor2 = %0.2f\n",timeSensor2);
   
   deltaTime = timeSensor2 - timeSensor1;
 
   if(deltaTime > 0) {
     speedFPS = DISTANCE / deltaTime;    // speed = distance / time
+    Serial.printf("speedFPS = %0.2f FPS\n",speedFPS);
     speedMPH = speedFPS * 0.681818;     // 1ft/sec = 0.681818 miles/hour
-    count=count++;
+    count++;
+    Serial.printf("Speed = %0.2f MPH\n", speedMPH);
+    Serial.printf("Objects measured = %i\n", count);
   }
-
-  Serial.printf("Speed = %0.2f\n", speedMPH);
-  Serial.printf("Objects measured = %i\n", count);
-
-  delay(1000);
+  delay(500);
   // returns the Duration in microseconds
   // duration1 = pulseIn(ECHOPIN1,HIGH); // Waits for the echo pin to get high on sensor 1
-  // delayMicroseconds(15); // 10us high
+  // delayMicroseconds(10); // 10us high
   // duration2 = pulseIn(ECHOPIN2,HIGH); // Waits for the echo pin to get high on sensor 2
   // distanceIn = distance(duration1); // Use function to calculate the distance
   // Serial.printf("Distance = %0.2f in\n",distanceIn); // Output to serial
@@ -144,6 +156,7 @@ float measureTime(int trigPin, int echoPin) {
   delay(2);
   digitalWrite(trigPin,HIGH);
   delay(10);
-  digitalWrite(trigPin,LOw);
-  return pulseIn(echoPin,HIGH)*0.0000001;   //converts to seconds
+  digitalWrite(trigPin,LOW);
+  // return pulseIn(echoPin,HIGH)*0.0000001;   //converts to seconds
+  return pulseIn(echoPin,HIGH);   //converts to seconds
 }
