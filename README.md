@@ -13,3 +13,4 @@ Just playing around with different sensors to figure out an inexpensive method f
 
 
 #### Created by A Montoya, 07 April 2025
+Check out my other projects on [Hackster.io](https://www.hackster.io/denver_pucker)
