@@ -4,4 +4,12 @@ Just playing around with different sensors to figure out an inexpensive method f
 
 ## This is a Heading
 
+* gives me bullets
+
 ### This is a heading 2
+
+1. Gives me a numbered list
+2. automatically gives me a numbered list
+
+
+#### Created by A Montoya, 07 April 2025
