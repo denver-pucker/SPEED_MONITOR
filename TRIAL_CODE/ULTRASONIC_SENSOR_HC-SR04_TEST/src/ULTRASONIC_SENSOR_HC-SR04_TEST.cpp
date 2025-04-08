@@ -34,13 +34,13 @@ const int PIR = D5;          // PIR sensor
 const int DISTANCE = 1.0;    // Adjust distance as necessary in feet
 
 float timeSensor1, timeSensor2;
-float deltaTime, feetPerSecond;
+float feetPerSecond;
 float speedFPS, speedMPH;
 int count = 0;
 bool motion;
 bool sensorOneSet;
 bool sensorTwoSet;
-unsigned int currentTime, lastTime;
+unsigned int currentTime, lastTime, deltaTime;
 unsigned int sensorOneTime, sensorTwoTime;
 
 float duration1 = 0.0;
