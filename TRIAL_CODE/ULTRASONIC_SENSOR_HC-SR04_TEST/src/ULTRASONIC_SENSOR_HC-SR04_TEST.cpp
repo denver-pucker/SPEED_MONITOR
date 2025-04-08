@@ -40,13 +40,8 @@ int count = 0;
 bool motion;
 bool sensorOneSet;
 bool sensorTwoSet;
-unsigned int currentTime, lastTime, deltaTime;
 unsigned int sensorOneTime, sensorTwoTime;
-
-float duration1 = 0.0;
-float duration2 = 0.0;
-float distance1 = 0.0;
-float distance2 = 0.0;
+float deltaTime;
 
 // Calibration values
 float CAL_ECHO = 0.15;
@@ -89,7 +84,6 @@ void setup() {
 
 // loop() runs over and over again, as quickly as it can execute.
 void loop() {
-  currentTime = millis();
   motion = digitalRead(PIR);
 // Serial.printf("Motion detected %i\n",motion);
 // if(motion) {
@@ -99,16 +93,16 @@ void loop() {
     Serial.printf("timeSensor1 = %0.2f\n",timeSensor1);
     if( timeSensor1 > CAL_ECHO) {
       sensorOneSet = 1;
-      sensorOneTime = currentTime;
+      sensorOneTime = millis();
       // Wait for sensor 2 to get triggered // need to figure out a timeout in case bike is coming from the opposite direction
       while(sensorOneSet) {                                             
         timeSensor2 = measureTime(TRIGGERPIN2,ECHOPIN2);
         if( timeSensor2 > CAL_ECHO) {
-          sensorTwoTime = currentTime;
+          sensorTwoTime = millis();
           Serial.printf("timeSensor2 = %0.2f\n",timeSensor2);
           sensorTwoSet = 1;
           deltaTime = (sensorTwoTime - sensorOneTime) / 1000.0;
-          Serial.printf("deltaTime = %0.2f\n",deltaTime);
+          Serial.printf("deltaTime = %0.4f\n",deltaTime);
     
           // if(deltaTime > 0) {÷
             Serial.printf("Objects measured = %i\n", count);
