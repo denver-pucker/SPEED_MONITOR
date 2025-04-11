@@ -24,6 +24,8 @@
 #include <Adafruit_MQTT.h>
 #include "Adafruit_MQTT/Adafruit_MQTT_SPARK.h"
 #include "Adafruit_MQTT/Adafruit_MQTT.h"
+#include "Adafruit_GFX.h"
+#include "Adafruit_SSD1306.h"
 #include "credentials.h"
 
 const int TRIGGERPIN1 = D8;  // Trigger pin sensor 1
