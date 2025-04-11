@@ -43,6 +43,7 @@ int counter = 0;
 float t1;
 float t2;
 float deltaT;
+bool t1Set, t2Set;
 
 // Adafruit Display 
 const int OLED_RESET=-1;
@@ -188,28 +189,47 @@ void setup() {
   display.setCursor(40,48);
   display.print("Ready");
   display.display();
-  delay(2000);
+  delay(5000);
+
+  display.clearDisplay();
+  display.setTextSize(2);
+  display.setTextColor(WHITE);
+  display.setCursor(25,0);
+  display.print("Waiting");
+  display.setCursor(50,24);
+  display.print("For");
+  display.setCursor(30,48);
+  display.print("Object");
+  display.display();
 }
 
 // loop() runs over and over again, as quickly as it can execute.
 void loop() {
   // MQTT_connect;
   // MQTT_ping;
-  Serial.printf("Waiting for object...");
+  Serial.printf("Waiting for object...\n");
 
   t1 = 0;
   while (!detectObject(TRIGGERPIN1, ECHOPIN1)) 
   delay(5);
+  t1Set=1;
+  t2Set=0;
   t1 = getCurrentTime();
+  Serial.printf("t1: %0.4f\n",t1);
 
-  t2 = 0;
-  while (!detectObject(TRIGGERPIN2, ECHOPIN2)) 
-  delay(5);
-  t2 = getCurrentTime();
+  if(t1) {
+    t2 = 0;
+    while (!detectObject(TRIGGERPIN2, ECHOPIN2)) 
+    delay(5);
+    t2Set=1;
+    t1Set=0;
+    t2 = getCurrentTime();
+    Serial.printf("t2: %0.4f\n",t2);
+  }
 
   float deltaT = t2 - t1;
 
-  if (deltaT > 0.0 && deltaT < 35.0) {
+  if (deltaT > 0.0 && deltaT < 5.0) {
     float speedFPS = DISTANCE_FEET / deltaT;
     float speedMPH = speedFPS * FT_TO_MPH;
     counter++;
@@ -223,7 +243,7 @@ void loop() {
     display.setCursor(0,24);
     display.printf("Speed:");
     display.setCursor(0,48);
-    display.printf("%0.0f",speedMPH);
+    display.printf("%0.2f",speedMPH);
     display.printf(" MPH");
     display.display();
 
@@ -280,11 +300,18 @@ float getCurrentTime() {
 
 bool detectObject(int trigPin, int echoPin) {
   digitalWrite(trigPin, LOW);
-  delayMicroseconds(2);
+  delay(2);
   digitalWrite(trigPin, HIGH);
-  delayMicroseconds(10);
+  delay(10);
   digitalWrite(trigPin, LOW);
 
   long duration = pulseIn(echoPin, HIGH);
-  return duration > 0;
+  Serial.printf("echoPin: %i duration = %u @ %u\n", echoPin,duration,millis());
+  if( duration < 10000) {      //added line 300 to 307 to try and get this calibrated
+    Serial.printf("Good Duration: echoPin: %i duration = %u @ %u\n", echoPin,duration,millis());
+    return duration > 0;
+  }
+  else {
+    return 0;
+  }
 }
