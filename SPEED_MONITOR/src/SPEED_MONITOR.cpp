@@ -1,26 +1,13 @@
 /* 
- * Project ULTRASONIC_SENSOR_HC-SR04_TEST_2
- * Author: Adrian Montoya
- * Date: 9 APRIL 2025
- * 
- * Ultrasonic Ranger 
- * Distance = echo signal high time * Sound speed (343M/S)/2
- * Distance = echo signal high time * Sound speed (1,125FT/S)/2
- * One ping of the HC0SR04 actually exists of 8 pulses at 40 kHz 
- * to do the measurement. To start a ping you need to provide a 
- * 10us pulse on the trigger input. When the distance is measured 
- * by the 8 pulses the HC0SR04 puts a pulse on the echo pin. 
- * You can calculate the distance with the length of the echo pulse 
- * and the speed of sound. The speed of sound is 340 m/s or 
- * 2.9 micro seconds per mm. We have to divide the length of the 
- * pulse by 2.9 to get the result in mm. The ping is traveling 
- * towards an object and back to the sensor again. 
- * Because of this we need to divide the result by two. 
- * Between two pings we need to keep a 60ms measurement cycle.
+ * Project  SPEED_MONITOR
+ * Author:  ADRIAN MONTOYA
+ * Date:    15 APRIL 2025 
  */
 
 // Include Particle Device OS APIs
 #include "Particle.h"
+#include "neopixel.h"
+#include "Colors.h"
 #include <Adafruit_MQTT.h>
 #include "Adafruit_MQTT/Adafruit_MQTT_SPARK.h"
 #include "Adafruit_MQTT/Adafruit_MQTT.h"
@@ -28,43 +15,66 @@
 #include "Adafruit_SSD1306.h"
 #include "credentials.h"
 
-// Ultrasonic Sensors and calculations/thresholds
-const int TRIGGERPIN1 = D8;         // Trigger pin sensor 1
-const int ECHOPIN1 = D9;            // Echo pin sensor 1
-const int TRIGGERPIN2 = D7;         // Trigger pin sensor 2
-const int ECHOPIN2 = D6;            // Echo pin sensor 2
-const int PIR = D5;                 // Might need to include PIR sensor
-const int LED_PIN = D4;             // LED light up if SPEED_THRESHOLD is exceeded     
-const float DISTANCE_FEET = 2.0;    // Distance between the 2 ultrasonic sensors
-const float FT_TO_MPH = 0.6818;     // convert feet to MPH
-const float SPEED_THRESHOLD = 10.0; // Only record values higher than this
+const int MATRIX_PIN = D2;
+const int MATRIX_WIDTH = 16;
+const int MATRIX_HEIGHT = 16;
+const int NUM_PIXELS = (MATRIX_WIDTH * MATRIX_HEIGHT);
+const int LED_TYPE = WS2812B;
 
-int counter = 0;
-float t1;
-float t2;
-float deltaT;
-bool t1Set, t2Set;
+Adafruit_NeoPixel matrix = Adafruit_NeoPixel(NUM_PIXELS, SPI1, LED_TYPE);
+
+// HC-SR04 sensor pins
+const int TRIG_A = D8;    // Trigger pin sensor 1
+const int ECHO_A = D9;    // Echo pin sensor 1
+const int TRIG_B = D7;    // Trigger pin sensor 2
+const int ECHO_B = D6;    // Echo pin sensor 2
+const int LED_PIN = D4;   // LED to show object identified
+
+const float SENSOR_DISTANCE_METERS = 0.61;
+const float MPS_TO_MPH = 2.23694;
+
+unsigned long triggerTimeA = 0;
+unsigned long triggerTimeB = 0;
+bool waitingForB = false;
+unsigned long debounceDelay = 1000;
+
+// Movement counters
+int walkingCount = 0;
+int runningCount = 0;
+int cyclingCount = 0;
+
+// Simple 5x7 font for digits
+const byte numbers[10][5] = {
+  {0x3E, 0x51, 0x49, 0x45, 0x3E}, {0x00, 0x42, 0x7F, 0x40, 0x00},
+  {0x62, 0x51, 0x49, 0x49, 0x46}, {0x22, 0x49, 0x49, 0x49, 0x36},
+  {0x18, 0x14, 0x12, 0x7F, 0x10}, {0x2F, 0x49, 0x49, 0x49, 0x31},
+  {0x3E, 0x49, 0x49, 0x49, 0x32}, {0x01, 0x71, 0x09, 0x05, 0x03},
+  {0x36, 0x49, 0x49, 0x49, 0x36}, {0x26, 0x49, 0x49, 0x49, 0x3E}
+};
 
 // Adafruit Display 
-const int OLED_RESET=-1;
+const int OLED_RESET = -1;
 Adafruit_SSD1306 display(OLED_RESET);
-const int LOGO16_GLCD_HEIGHT=64;
-const int LOGO16_GLCD_WIDTH=128;
+const int LOGO16_GLCD_HEIGHT = 64;
+const int LOGO16_GLCD_WIDTH = 128;
 const int XPOS = 0;
 const int YPOS = 1;
 
 
+/************ Global State (you don't need to change this!) ***   ***************/ 
 TCPClient TheClient; 
- 
-Adafruit_MQTT_SPARK mqtt(&TheClient,AIO_SERVER,AIO_SERVERPORT,AIO_USERNAME,AIO_KEY); 
-Adafruit_MQTT_Publish aqPub = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/airquality");
-Adafruit_MQTT_Publish dustPub = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/dustquality");
 
-/************Declare Functions*************/
-void MQTT_connect();
-bool MQTT_ping();
-float getCurrentTime();
-bool detectObject(int trigPin, int echoPin);
+// Setup the MQTT client class by passing in the WiFi client and MQTT server and login details. 
+Adafruit_MQTT_SPARK mqtt(&TheClient,AIO_SERVER,AIO_SERVERPORT,AIO_USERNAME,AIO_KEY); 
+
+/****************************** Feeds ***************************************/ 
+// Setup Feeds to publish or subscribe 
+// Notice MQTT paths for AIO follow the form: <username>/feeds/<feedname> 
+Adafruit_MQTT_Subscribe subFeed = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "/feeds/button"); 
+Adafruit_MQTT_Publish pubFeed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/slider1");
+
+Adafruit_MQTT_Subscribe sliderFeed = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "/feeds/slider2"); 
+Adafruit_MQTT_Subscribe buttonFeed = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "/feeds/buttononoff"); 
 
 static const unsigned char logo16_glcd_bmp[] =
 {
@@ -134,8 +144,12 @@ static const unsigned char logo16_glcd_bmp[] =
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
     };
     
-    // const GFXglyph customGlyph = { image_data, 128, 64, 128, 0, 0 };
-    // const GFXfont customFont = { (uint8_t *)image_data, &#038;customGlyph, 32, 127, 64 };
+// FUNCTIONS
+uint16_t getPixelIndex(uint8_t x, uint8_t y);
+void clearMatrix();
+void drawDigit(int digit, int xOffset, int yOffset, uint32_t color);
+void showSpeed(float speedMPH, uint32_t color);
+float measureDistance(int trigPin, int echoPin);
     
 #if (SSD1306_LCDHEIGHT != 64)
 #error("Height incorrect, please fix Adafruit_SSD1306.h!");
@@ -147,7 +161,7 @@ void testdrawbitmap(const uint8_t *bitmap, uint8_t w, uint8_t h);
 SYSTEM_MODE(SEMI_AUTOMATIC);
 
 // Run the application and system concurrently in separate threads
-// SYSTEM_THREAD(ENABLED);
+SYSTEM_THREAD(ENABLED);
 
 // Show system, cloud connectivity, and application logs over USB
 // View logs with CLI using 'particle serial monitor --follow'
@@ -155,17 +169,30 @@ SerialLogHandler logHandler(LOG_LEVEL_INFO);
 
 // setup() runs once, when the device is first turned on
 void setup() {
-  // Enable Serial Monitor
-  Serial.begin (9600);
-  waitFor(Serial.isConnected,10000);  //wait for Serial Monitor
+  // setup ultrasonic sensor
+  pinMode(TRIG_A,OUTPUT);
+  pinMode(ECHO_A,INPUT);
+  pinMode(TRIG_B,OUTPUT);
+  pinMode(ECHO_B,INPUT);
+  pinMode(LED_PIN,OUTPUT);
 
-  pinMode(TRIGGERPIN1,OUTPUT);
-  pinMode(ECHOPIN1,INPUT); 
-  pinMode(TRIGGERPIN2,OUTPUT);     
-  pinMode(ECHOPIN2,INPUT); 
-  pinMode(PIR,INPUT); 
-  pinMode(LED_PIN,OUTPUT);  
-  
+  // start serial monitor
+  Serial.begin (9600);
+  waitFor(Serial.isConnected,10000); 
+
+  // Connect to Internet but not Particle Cloud
+  // WiFi.on();
+  // WiFi.connect();
+  // while(WiFi.connecting()) {
+  //   Serial.printf(".");
+  // }
+  // Serial.printf("\n\n");
+
+  // Setup MQTT subscription
+  mqtt.subscribe(&subFeed);
+  mqtt.subscribe(&buttonFeed);
+  mqtt.subscribe(&sliderFeed);
+
   // by default, we'll generate the high voltage from the 3.3v line internally! (neat!)
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);  // initialize with the I2C addr 0x3D (for the 128x64)
   // init done
@@ -201,117 +228,139 @@ void setup() {
   display.setCursor(30,48);
   display.print("Object");
   display.display();
+
+  matrix.begin();
+  matrix.show();
 }
 
 // loop() runs over and over again, as quickly as it can execute.
 void loop() {
-  // MQTT_connect;
-  // MQTT_ping;
-  Serial.printf("Waiting for object...\n");
+  digitalWrite(LED_PIN,LOW);
+  Serial.printf("INSIDE LOOP\n");                                           // remove for debug only
+  float distA = measureDistance(TRIG_A,ECHO_A);
+  Serial.printf("distA = %0.2f\n",distA);                                   // remove for debug only
+  float distB = measureDistance(TRIG_B,ECHO_B);
+  Serial.printf("distB = %0.2f\n",distB);                                   // remove for debug only
 
-  t1 = 0;
-  while (!detectObject(TRIGGERPIN1, ECHOPIN1)) 
-  delay(5);
-  t1Set=1;
-  t2Set=0;
-  t1 = getCurrentTime();
-  Serial.printf("t1: %0.4f\n",t1);
+  unsigned long now = millis();
 
-  if(t1) {
-    t2 = 0;
-    while (!detectObject(TRIGGERPIN2, ECHOPIN2)) 
-    delay(5);
-    t2Set=1;
-    t1Set=0;
-    t2 = getCurrentTime();
-    Serial.printf("t2: %0.4f\n",t2);
+  if (distA < 50 && !waitingForB && now - triggerTimeA > debounceDelay) {   // waiting 1 sec for sensor 2 reading
+    triggerTimeA = now;
+    waitingForB = true;
+    Serial.printf("Sensor A activated waiting for Sensor B\n");             // remove for debug only
   }
 
-  float deltaT = t2 - t1;
+  if (waitingForB && distB < 50 && now - triggerTimeB > debounceDelay) {
+    triggerTimeB = now;
+    digitalWrite(LED_PIN,HIGH);
+    Serial.printf("Sensor B activated\n");                                  // remove for debug only
 
-  if (deltaT > 0.0 && deltaT < 5.0) {
-    float speedFPS = DISTANCE_FEET / deltaT;
-    float speedMPH = speedFPS * FT_TO_MPH;
-    counter++;
+    float timeSec = (triggerTimeB - triggerTimeA) / 1000.0;
+    float speedMps = SENSOR_DISTANCE_METERS / timeSec;
+    float speedMph = speedMps * MPS_TO_MPH;
+    // remove next lines for debug only
+    Serial.printf("timeSec = %0.2f\n",timeSec);                             // remove for debug only
+    Serial.printf("speedMps = %02.f\n",speedMps);                           // remove for debug only
+    Serial.printf("speedMph = %0.2f\n",speedMph);                           // remove for debug only
 
-    Serial.printf("Object %i Speed: %0.2f MPH\n", counter, speedMPH);
+    String category;
+    uint32_t color;
+
+    if (speedMph < 4.5) {
+      category = "Walking";
+      color = matrix.Color(0,255,0);
+      walkingCount++;
+    } else if (speedMph <= 10.0) {
+      category = "Running";
+      color = matrix.Color(255,255,0);
+      runningCount++;
+    } else {
+      category = "Cycling";
+      if(speedMph > 10.0 && speedMph < 18.0) {
+        color = matrix.Color(0,255,0);
+      }
+      else {
+        color = matrix.Color(255,0,0);
+      }
+      }
+      cyclingCount++;
+
+    Serial.printf("Speed: %0.2f mph — %s\n",speedMph,category.c_str());
+    Serial.printf("W: %d, R: %d, C: %d\n", walkingCount,runningCount,cyclingCount);
 
     display.clearDisplay();
     display.setCursor(0,0);
     display.setTextSize(2);
-    display.printf("Object: %i", counter);
-    display.setCursor(0,24);
-    display.printf("Speed:");
-    display.setCursor(0,48);
-    display.printf("%0.2f",speedMPH);
-    display.printf(" MPH");
+    display.printf("Speed: \n%0.1f mph\n",speedMph);
+    display.setTextSize(1);
+    display.setCursor(0,35);
+    display.printf("Walking: %d\n", walkingCount);
+    display.setCursor(0,45);
+    display.printf("Running: %d\n", runningCount);
+    display.setCursor(0,55);
+    display.printf("Cycling: %d\n", cyclingCount);
     display.display();
 
-    if (speedMPH > SPEED_THRESHOLD) {
-        digitalWrite(LED_PIN, HIGH);
-    } else {
-        digitalWrite(LED_PIN, LOW);
+    showSpeed(speedMph, color);
+    delay(2000);
+    clearMatrix();
+    waitingForB = false;
+  }
+
+  delay(50);
+}
+
+// FUNCTIONS
+uint16_t getPixelIndex(uint8_t x, uint8_t y) {
+  y = MATRIX_HEIGHT - 1 - y; // Flip Y
+  if (y % 2 == 0) return y * MATRIX_WIDTH + x;
+  else return y * MATRIX_WIDTH + (MATRIX_WIDTH - 1 - x);
+}
+
+void clearMatrix() {
+  for (int i = 0; i < NUM_PIXELS; i++) {
+    matrix.setPixelColor(i, 0);
+  }
+  matrix.show();
+}
+
+void drawDigit(int digit, int xOffset, int yOffset, uint32_t color) {
+  for (int col = 0; col < 5; col++) {
+    byte column = numbers[digit][col];
+    for (int row = 0; row < 7; row++) {
+      if (column & (1 << row)) {
+        int x = xOffset + col;
+        int y = yOffset + row;
+        if (x >= 0 && x < MATRIX_WIDTH && y >= 0 && y < MATRIX_HEIGHT)
+          matrix.setPixelColor(getPixelIndex(x, y), color);
+      }
     }
   }
-
-  delay(1000);
-}
-  
-// Function to connect and reconnect as necessary to the MQTT server.
-// Should be called in the loop function and it will take care if connecting.
-void MQTT_connect() {
-  int8_t ret;
-  
-  // Return if already connected.
-  if (mqtt.connected()) {
-    return;
-  }
-  
-  Serial.printf("Connecting to MQTT... ");
-  
-  while ((ret = mqtt.connect()) != 0) { // connect will return 0 for connected
-    Serial.printf("Error Code %s\n",mqtt.connectErrorString(ret));
-    Serial.printf("Retrying MQTT connection in 5 seconds...\n");
-    mqtt.disconnect();
-    delay(5000);  // wait 5 seconds and try again
-  }
-  Serial.printf("MQTT Connected!\n");
 }
 
-bool MQTT_ping() {
-  static unsigned int last;
-  bool pingStatus;
-  
-  if ((millis()-last)>120000) {
-    Serial.printf("Pinging MQTT \n");
-    pingStatus = mqtt.ping();
-    if(!pingStatus) {
-      Serial.printf("Disconnecting \n");
-      mqtt.disconnect();
-    }
-    last = millis();
-  }
-  return pingStatus;
-}
-  
-float getCurrentTime() {
-  return micros() / 1000000.0; // seconds
+void showSpeed(float speedMPH, uint32_t color) {
+  clearMatrix();
+  int whole = int(speedMPH);
+  int tens = whole / 10;
+  int ones = whole % 10;
+
+  // Total width of 2 digits = 5 + 1 + 5 = 11
+  int totalWidth = 11;
+  int xOffset = (MATRIX_WIDTH - totalWidth) / 2;
+  int yOffset = (MATRIX_HEIGHT - 7) / 2;
+
+  drawDigit(tens, xOffset, yOffset, color);
+  drawDigit(ones, xOffset + 6, yOffset, color);
+  matrix.show();
 }
 
-bool detectObject(int trigPin, int echoPin) {
+float measureDistance(int trigPin, int echoPin) {
   digitalWrite(trigPin, LOW);
-  delay(2);
+  delayMicroseconds(2);
   digitalWrite(trigPin, HIGH);
-  delay(10);
+  delayMicroseconds(10);
   digitalWrite(trigPin, LOW);
-
   long duration = pulseIn(echoPin, HIGH);
-  Serial.printf("echoPin: %i duration = %u @ %u\n", echoPin,duration,millis());
-  if( duration < 10000) {      //added line 300 to 307 to try and get this calibrated
-    Serial.printf("Good Duration: echoPin: %i duration = %u @ %u\n", echoPin,duration,millis());
-    return duration > 0;
-  }
-  else {
-    return 0;
-  }
+  return duration * 0.0343 / 2;
 }
+
