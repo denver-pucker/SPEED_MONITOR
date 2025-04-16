@@ -32,6 +32,7 @@ const int LED_PIN = D4;   // LED to show object identified
 
 const float SENSOR_DISTANCE_METERS = 0.61;
 const float MPS_TO_MPH = 2.23694;
+const float DETECTION_THRESHOLD_CM = 91.44;   // 3 feet
 
 unsigned long triggerTimeA = 0;
 unsigned long triggerTimeB = 0;
@@ -42,6 +43,10 @@ unsigned long debounceDelay = 1000;
 int walkingCount = 0;
 int runningCount = 0;
 int cyclingCount = 0;
+
+// In order to use sensors in both directions
+enum SensorState { NONE, A_FIRST, B_FIRST };
+SensorState triggeredSensor = NONE;
 
 // Simple 5x7 font for digits
 const byte numbers[10][5] = {
@@ -70,11 +75,11 @@ Adafruit_MQTT_SPARK mqtt(&TheClient,AIO_SERVER,AIO_SERVERPORT,AIO_USERNAME,AIO_K
 /****************************** Feeds ***************************************/ 
 // Setup Feeds to publish or subscribe 
 // Notice MQTT paths for AIO follow the form: <username>/feeds/<feedname> 
-Adafruit_MQTT_Subscribe subFeed = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "/feeds/button"); 
-Adafruit_MQTT_Publish pubFeed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/slider1");
-
-Adafruit_MQTT_Subscribe sliderFeed = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "/feeds/slider2"); 
-Adafruit_MQTT_Subscribe buttonFeed = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "/feeds/buttononoff"); 
+// Adafruit_MQTT_Subscribe subFeed = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "/feeds/button"); 
+Adafruit_MQTT_Publish pubMPH = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/biketrail");
+Adafruit_MQTT_Publish pubWALK = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/walking");
+Adafruit_MQTT_Publish pubRUN = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/running");
+Adafruit_MQTT_Publish pubBIKE = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/cycling");
 
 static const unsigned char logo16_glcd_bmp[] =
 {
@@ -150,6 +155,10 @@ void clearMatrix();
 void drawDigit(int digit, int xOffset, int yOffset, uint32_t color);
 void showSpeed(float speedMPH, uint32_t color);
 float measureDistance(int trigPin, int echoPin);
+void handleSpeed(float speedMph);
+void MQTT_connect();
+bool MQTT_ping();
+void pubAdafruit(float speedMPH, int walk, int run, int bike);
     
 #if (SSD1306_LCDHEIGHT != 64)
 #error("Height incorrect, please fix Adafruit_SSD1306.h!");
@@ -181,17 +190,12 @@ void setup() {
   waitFor(Serial.isConnected,10000); 
 
   // Connect to Internet but not Particle Cloud
-  // WiFi.on();
-  // WiFi.connect();
-  // while(WiFi.connecting()) {
-  //   Serial.printf(".");
-  // }
-  // Serial.printf("\n\n");
-
-  // Setup MQTT subscription
-  mqtt.subscribe(&subFeed);
-  mqtt.subscribe(&buttonFeed);
-  mqtt.subscribe(&sliderFeed);
+  WiFi.on();
+  WiFi.connect();
+  while(WiFi.connecting()) {
+    Serial.printf(".");
+  }
+  Serial.printf("\n\n");
 
   // by default, we'll generate the high voltage from the 3.3v line internally! (neat!)
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);  // initialize with the I2C addr 0x3D (for the 128x64)
@@ -235,78 +239,40 @@ void setup() {
 
 // loop() runs over and over again, as quickly as it can execute.
 void loop() {
-  digitalWrite(LED_PIN,LOW);
-  Serial.printf("INSIDE LOOP\n");                                           // remove for debug only
-  float distA = measureDistance(TRIG_A,ECHO_A);
-  Serial.printf("distA = %0.2f\n",distA);                                   // remove for debug only
-  float distB = measureDistance(TRIG_B,ECHO_B);
-  Serial.printf("distB = %0.2f\n",distB);                                   // remove for debug only
+  MQTT_connect();
+  MQTT_ping();
 
+  digitalWrite(LED_PIN,LOW);                                              // led on board to show object detected
+
+  float distA = measureDistance(TRIG_A, ECHO_A);
+  float distB = measureDistance(TRIG_B, ECHO_B);
   unsigned long now = millis();
 
-  if (distA < 50 && !waitingForB && now - triggerTimeA > debounceDelay) {   // waiting 1 sec for sensor 2 reading
-    triggerTimeA = now;
-    waitingForB = true;
-    Serial.printf("Sensor A activated waiting for Sensor B\n");             // remove for debug only
+  // Detect first sensor
+  if (triggeredSensor == NONE) {
+    if (distA < DETECTION_THRESHOLD_CM && triggeredSensor == NONE && now - triggerTimeA > debounceDelay) {
+      triggerTimeA = now;
+      triggeredSensor = A_FIRST;
+    } else if (distB < DETECTION_THRESHOLD_CM && triggeredSensor == NONE && now - triggerTimeB > debounceDelay) {
+      triggerTimeB = now;
+      triggeredSensor = B_FIRST;
+    }
   }
 
-  if (waitingForB && distB < 50 && now - triggerTimeB > debounceDelay) {
+  // Detect second sensor and calculate speed
+  if (triggeredSensor == A_FIRST && distB < DETECTION_THRESHOLD_CM && now - triggerTimeB > debounceDelay) {
     triggerTimeB = now;
-    digitalWrite(LED_PIN,HIGH);
-    Serial.printf("Sensor B activated\n");                                  // remove for debug only
-
     float timeSec = (triggerTimeB - triggerTimeA) / 1000.0;
-    float speedMps = SENSOR_DISTANCE_METERS / timeSec;
-    float speedMph = speedMps * MPS_TO_MPH;
-    // remove next lines for debug only
-    Serial.printf("timeSec = %0.2f\n",timeSec);                             // remove for debug only
-    Serial.printf("speedMps = %02.f\n",speedMps);                           // remove for debug only
-    Serial.printf("speedMph = %0.2f\n",speedMph);                           // remove for debug only
-
-    String category;
-    uint32_t color;
-
-    if (speedMph < 4.5) {
-      category = "Walking";
-      color = matrix.Color(0,255,0);
-      walkingCount++;
-    } else if (speedMph <= 10.0) {
-      category = "Running";
-      color = matrix.Color(255,255,0);
-      runningCount++;
-    } else {
-      category = "Cycling";
-      if(speedMph > 10.0 && speedMph < 18.0) {
-        color = matrix.Color(0,255,0);
-      }
-      else {
-        color = matrix.Color(255,0,0);
-      }
-      }
-      cyclingCount++;
-
-    Serial.printf("Speed: %0.2f mph — %s\n",speedMph,category.c_str());
-    Serial.printf("W: %d, R: %d, C: %d\n", walkingCount,runningCount,cyclingCount);
-
-    display.clearDisplay();
-    display.setCursor(0,0);
-    display.setTextSize(2);
-    display.printf("Speed: \n%0.1f mph\n",speedMph);
-    display.setTextSize(1);
-    display.setCursor(0,35);
-    display.printf("Walking: %d\n", walkingCount);
-    display.setCursor(0,45);
-    display.printf("Running: %d\n", runningCount);
-    display.setCursor(0,55);
-    display.printf("Cycling: %d\n", cyclingCount);
-    display.display();
-
-    showSpeed(speedMph, color);
-    delay(2000);
-    clearMatrix();
-    waitingForB = false;
+    float speedMph = (SENSOR_DISTANCE_METERS / timeSec) * MPS_TO_MPH;
+    handleSpeed(speedMph);
+    triggeredSensor = NONE;
+  } else if (triggeredSensor == B_FIRST && distA < DETECTION_THRESHOLD_CM && now - triggerTimeA > debounceDelay) {
+    triggerTimeA = now;
+    float timeSec = (triggerTimeA - triggerTimeB) / 1000.0;
+    float speedMph = (SENSOR_DISTANCE_METERS / timeSec) * MPS_TO_MPH;
+    handleSpeed(speedMph);
+    triggeredSensor = NONE;
   }
-
   delay(50);
 }
 
@@ -364,3 +330,110 @@ float measureDistance(int trigPin, int echoPin) {
   return duration * 0.0343 / 2;
 }
 
+void handleSpeed(float speedMph) {
+  String category;
+  uint32_t color;
+
+  if (speedMph < 4.5) {
+    category = "Walking";
+    color = matrix.Color(0,255,0);
+    walkingCount++;
+  } else if (speedMph <= 10.0) {
+    category = "Running";
+    color = matrix.Color(255,255,0);
+    runningCount++;
+  } else {
+    category = "Cycling";
+    if(speedMph > 10.0 && speedMph < 18.0) {
+      color = matrix.Color(0,255,0);
+    }
+    else {
+      color = matrix.Color(255,0,0);
+    }
+    }
+    cyclingCount++;
+
+  Serial.printf("Speed: %.2f mph — %s\n", speedMph, category.c_str());
+  Serial.printf("W: %d, R: %d, C: %d\n", walkingCount, runningCount, cyclingCount);
+
+  digitalWrite(LED_PIN,HIGH);                                              // led on board to show object detected
+
+  // write to OLED
+  display.clearDisplay();
+  display.setCursor(0,0);
+  display.setTextSize(2);
+  display.printf("Speed: \n%0.1f mph\n",speedMph);
+  display.setTextSize(1);
+  display.setCursor(0,35);
+  display.printf("Walking: %d\n", walkingCount);
+  display.setCursor(0,45);
+  display.printf("Running: %d\n", runningCount);
+  display.setCursor(0,55);
+  display.printf("Cycling: %d\n", cyclingCount);
+  display.display();
+
+  showSpeed(speedMph, color);
+  delay(2000);
+  clearMatrix();
+
+  // publish to Adafruit
+  pubAdafruit(speedMph,walkingCount,runningCount,cyclingCount);
+}
+
+// Function to connect and reconnect as necessary to the MQTT server.
+// Should be called in the loop function and it will take care if connecting.
+void MQTT_connect() {
+  int8_t ret;
+ 
+  // Return if already connected.
+  if (mqtt.connected()) {
+    return;
+  }
+ 
+  Serial.print("Connecting to MQTT... ");
+ 
+  while ((ret = mqtt.connect()) != 0) { // connect will return 0 for connected
+       Serial.printf("Error Code %s\n",mqtt.connectErrorString(ret));
+       Serial.printf("Retrying MQTT connection in 5 seconds...\n");
+       mqtt.disconnect();
+       delay(5000);  // wait 5 seconds and try again
+  }
+  Serial.printf("MQTT Connected!\n");
+}
+
+bool MQTT_ping() {
+  static unsigned int last;
+  bool pingStatus;
+
+  if ((millis()-last)>120000) {
+      Serial.printf("Pinging MQTT \n");
+      pingStatus = mqtt.ping();
+      if(!pingStatus) {
+        Serial.printf("Disconnecting \n");
+        mqtt.disconnect();
+      }
+      last = millis();
+  }
+  return pingStatus;
+}
+
+void pubAdafruit(float speedMPH, int walk, int run, int bike) {
+  static unsigned lastTime = -999999;
+  unsigned int currentTime;
+  
+  currentTime = millis();
+
+  if((currentTime - lastTime > 5000)) {
+    if(mqtt.Update()) {
+      pubMPH.publish(speedMPH);
+      Serial.printf("Publishing %0.2f \n",speedMPH); 
+      pubWALK.publish(walk);
+      Serial.printf("Publishing %i \n",walk); 
+      pubRUN.publish(run);
+      Serial.printf("Publishing %i \n",run); 
+      pubBIKE.publish(bike);
+      Serial.printf("Publishing %i \n",bike); 
+      } 
+    lastTime = millis();
+  }
+}
