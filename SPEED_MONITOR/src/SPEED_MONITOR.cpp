@@ -4,7 +4,7 @@
  * Date:    15 APRIL 2025 
  */
 
-// Include Particle Device OS APIs
+// Libraries used
 #include "Particle.h"
 #include "neopixel.h"
 #include "Colors.h"
@@ -15,6 +15,7 @@
 #include "Adafruit_SSD1306.h"
 #include "credentials.h"
 
+// Display Setup
 const int MATRIX_PIN = D2;
 const int MATRIX_WIDTH = 16;
 const int MATRIX_HEIGHT = 16;
@@ -23,23 +24,27 @@ const int LED_TYPE = WS2812B;
 
 Adafruit_NeoPixel matrix = Adafruit_NeoPixel(NUM_PIXELS, SPI1, LED_TYPE);
 
-// HC-SR04 sensor pins
+// HC-SR04 Sensor Pins
 const int TRIG_A = D8;    // Trigger pin sensor 1
 const int ECHO_A = D9;    // Echo pin sensor 1
 const int TRIG_B = D7;    // Trigger pin sensor 2
 const int ECHO_B = D6;    // Echo pin sensor 2
 const int LED_PIN = D4;   // LED to show object identified
 
+// Adjustable Thresholds
 const float SENSOR_DISTANCE_METERS = 0.61;
 const float MPS_TO_MPH = 2.23694;
-const float DETECTION_THRESHOLD_CM = 91.44;   // 3 feet
+// const float DETECTION_THRESHOLD_CM = 91.44;   // 3 feet
+const float DETECTION_THRESHOLD_CM = 60.96;   // 2 feet
+// const float DETECTION_THRESHOLD_CM = 30.48;   // 1 feet
 
+// State Variables
 unsigned long triggerTimeA = 0;
 unsigned long triggerTimeB = 0;
 bool waitingForB = false;
 unsigned long debounceDelay = 1000;
 
-// Movement counters
+// Movement Counters
 int walkingCount = 0;
 int runningCount = 0;
 int cyclingCount = 0;
@@ -75,8 +80,7 @@ Adafruit_MQTT_SPARK mqtt(&TheClient,AIO_SERVER,AIO_SERVERPORT,AIO_USERNAME,AIO_K
 /****************************** Feeds ***************************************/ 
 // Setup Feeds to publish or subscribe 
 // Notice MQTT paths for AIO follow the form: <username>/feeds/<feedname> 
-// Adafruit_MQTT_Subscribe subFeed = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "/feeds/button"); 
-Adafruit_MQTT_Publish pubMPH = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/biketrail");
+Adafruit_MQTT_Publish pubMPH = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/speed");
 Adafruit_MQTT_Publish pubWALK = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/walking");
 Adafruit_MQTT_Publish pubRUN = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/running");
 Adafruit_MQTT_Publish pubBIKE = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/cycling");
@@ -201,7 +205,7 @@ void setup() {
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);  // initialize with the I2C addr 0x3D (for the 128x64)
   // init done
   
-  // text display tests
+  // display Zia sun symbol 
   display.clearDisplay();
   display.display();
   display.clearDisplay();
@@ -210,6 +214,7 @@ void setup() {
   display.display();
   delay(3000);
   
+  // Ultrasonic "radar" ready....haha
   display.clearDisplay();
   display.setTextSize(2);
   display.setTextColor(WHITE);
@@ -222,6 +227,7 @@ void setup() {
   display.display();
   delay(5000);
 
+  // begin listening
   display.clearDisplay();
   display.setTextSize(2);
   display.setTextColor(WHITE);
@@ -242,11 +248,12 @@ void loop() {
   MQTT_connect();
   MQTT_ping();
 
-  digitalWrite(LED_PIN,LOW);                                              // led on board to show object detected
+  // led on board to show object detected
+  digitalWrite(LED_PIN,LOW);                                              
 
   float distA = measureDistance(TRIG_A, ECHO_A);
   float distB = measureDistance(TRIG_B, ECHO_B);
-  unsigned long now = millis();
+  unsigned long now = micros();
 
   // Detect first sensor
   if (triggeredSensor == NONE) {
@@ -262,13 +269,13 @@ void loop() {
   // Detect second sensor and calculate speed
   if (triggeredSensor == A_FIRST && distB < DETECTION_THRESHOLD_CM && now - triggerTimeB > debounceDelay) {
     triggerTimeB = now;
-    float timeSec = (triggerTimeB - triggerTimeA) / 1000.0;
+    float timeSec = (triggerTimeB - triggerTimeA) / 1000000.0;
     float speedMph = (SENSOR_DISTANCE_METERS / timeSec) * MPS_TO_MPH;
     handleSpeed(speedMph);
     triggeredSensor = NONE;
   } else if (triggeredSensor == B_FIRST && distA < DETECTION_THRESHOLD_CM && now - triggerTimeA > debounceDelay) {
     triggerTimeA = now;
-    float timeSec = (triggerTimeA - triggerTimeB) / 1000.0;
+    float timeSec = (triggerTimeA - triggerTimeB) / 1000000.0;
     float speedMph = (SENSOR_DISTANCE_METERS / timeSec) * MPS_TO_MPH;
     handleSpeed(speedMph);
     triggeredSensor = NONE;
@@ -326,7 +333,7 @@ float measureDistance(int trigPin, int echoPin) {
   digitalWrite(trigPin, HIGH);
   delayMicroseconds(10);
   digitalWrite(trigPin, LOW);
-  long duration = pulseIn(echoPin, HIGH);
+  long duration = pulseIn(echoPin, HIGH);   // better sensors have a timeout for pulseIn as a 3rd paraeter
   return duration * 0.0343 / 2;
 }
 
@@ -380,8 +387,6 @@ void handleSpeed(float speedMph) {
   pubAdafruit(speedMph,walkingCount,runningCount,cyclingCount);
 }
 
-// Function to connect and reconnect as necessary to the MQTT server.
-// Should be called in the loop function and it will take care if connecting.
 void MQTT_connect() {
   int8_t ret;
  
@@ -426,13 +431,13 @@ void pubAdafruit(float speedMPH, int walk, int run, int bike) {
   if((currentTime - lastTime > 5000)) {
     if(mqtt.Update()) {
       pubMPH.publish(speedMPH);
-      Serial.printf("Publishing %0.2f \n",speedMPH); 
+      Serial.printf("Speed of current object: %0.2f \n",speedMPH); 
       pubWALK.publish(walk);
-      Serial.printf("Publishing %i \n",walk); 
+      Serial.printf("Walking: %i \n",walk); 
       pubRUN.publish(run);
-      Serial.printf("Publishing %i \n",run); 
+      Serial.printf("Running: %i \n",run); 
       pubBIKE.publish(bike);
-      Serial.printf("Publishing %i \n",bike); 
+      Serial.printf("Cycling: %i \n",bike); 
       } 
     lastTime = millis();
   }
